@@ -4,7 +4,7 @@ import multiprocessing as mp
 import time
 import csv
 
-# get cities info
+# Get cities info
 def getCity(filepath):
     cities = []
     with open(filepath, "r") as f:
@@ -35,17 +35,17 @@ def genetic_algorithm_parallel(distance_matrix, population_size, cities, num_gen
             best_score = fitness_scores[best_idx]
             best_individual = population[best_idx]
 
-        # 停止條件
+        # Stopping condition
         if generation == num_generations - 1:
             break
 
         selected_parents = selection(population, fitness_scores)
 
-        # 確保選出的父代數量是偶數，避免索引越界
+        # Ensure an even number of parents
         if len(selected_parents) % 2 != 0:
-            selected_parents.append(selected_parents[0])  # 複製第一個父代湊成偶數
+            selected_parents.append(selected_parents[0])
 
-        # 並行生成子代
+        # Parallel generation of offspring
         with mp.Pool(mp.cpu_count()) as pool:
             results = pool.starmap(
                 process_crossover_mutation,
@@ -54,32 +54,57 @@ def genetic_algorithm_parallel(distance_matrix, population_size, cities, num_gen
             )
 
         new_population = [child for pair in results for child in pair]
-
-        # 維持種群數量
         population = new_population[:population_size]
 
-    return best_individual, 1 / best_score  # 返回最短距離
+    return best_individual, 1 / best_score  # Return shortest distance
 
 def process_crossover_mutation(parent1, parent2, crossover_rate, mutation_rate):
-    """單獨處理交叉與突變，用於並行處理"""
+    """Process crossover and mutation for parallel execution"""
     child1, child2 = crossover(parent1, parent2, crossover_rate)
     child1 = mutation(child1, mutation_rate)
     child2 = mutation(child2, mutation_rate)
     return child1, child2
 
 def calculate_fitness(individual, distance_matrix):
-    total_distance = sum(distance_matrix[individual[i-1]][individual[i]] for i in range(len(individual)))
-    return 1 / total_distance
+    total_distance = sum(distance_matrix[individual[i - 1]][individual[i]] for i in range(len(individual)))
+    return 1 / total_distance  # Use inverse of total distance to improve fitness scaling
 
-def generate_initial_population(population_size, num_cities):
-    return [np.random.permutation(num_cities).tolist() for _ in range(population_size)]
+def generate_initial_population(population_size, cities):
+    population = []
+    num_cities = len(cities)
+    for _ in range(population_size // 2):
+        population.append(np.random.permutation(num_cities).tolist())  # Random generation
+    
+    for _ in range(population_size // 2):  # Greedy initialization
+        start_city = np.random.randint(num_cities)
+        unvisited = set(range(num_cities))
+        unvisited.remove(start_city)
+        path = [start_city]
+        while unvisited:
+            last_city = path[-1]
+            next_city = min(unvisited, key=lambda x: np.linalg.norm(np.array(cities[last_city]) - np.array(cities[x])))
+            path.append(next_city)
+            unvisited.remove(next_city)
+        population.append(path)
+    return population
+
+def validate_path(individual):
+    """Validate and fix the path"""
+    seen = set()
+    new_individual = []
+    for city in individual:
+        if city not in seen:
+            new_individual.append(city)
+            seen.add(city)
+    missing = [city for city in range(len(individual)) if city not in seen]
+    return new_individual + missing
 
 def crossover(parent1, parent2, crossover_rate):
     if np.random.rand() < crossover_rate:
         crossover_point = np.random.randint(1, len(parent1) - 1)
         child1 = parent1[:crossover_point] + [gene for gene in parent2 if gene not in parent1[:crossover_point]]
         child2 = parent2[:crossover_point] + [gene for gene in parent1 if gene not in parent2[:crossover_point]]
-        return child1, child2
+        return validate_path(child1), validate_path(child2)
     return parent1, parent2
 
 def mutation(individual, mutation_rate):
@@ -89,29 +114,27 @@ def mutation(individual, mutation_rate):
     return individual
 
 def selection(population, fitness_scores, elite_size=2):
-    # 保留精英
+    # Retain elites
     elite_indices = np.argsort(fitness_scores)[-elite_size:]
     elites = [population[i] for i in elite_indices]
-    
-    # 剩余选择
+
+    # Roulette wheel selection for the rest
     prob = np.array(fitness_scores) / np.sum(fitness_scores)
     selected_indices = np.random.choice(len(population), len(population) - elite_size, p=prob, replace=False)
     selected = [population[i] for i in selected_indices]
-    
+
     return elites + selected
 
-
-# 繪製路徑圖
 def plot_route(cities, best_route, best_distance):
     plt.figure(figsize=(10, 8))
     best_route_cities = [cities[i] for i in best_route] + [cities[best_route[0]]]
     x, y = zip(*best_route_cities)
 
-    # 繪製路徑
+    # Plot the route
     plt.plot(x, y, marker='o', color='blue', label=f"Shortest Distance: {best_distance:.2f}")
     plt.scatter(*zip(*cities), color='red', label="Cities")
 
-    # 標示城市編號
+    # Label cities
     for i, city in enumerate(cities):
         plt.text(city[0], city[1], str(i), fontsize=8, color='green')
 
@@ -122,27 +145,22 @@ def plot_route(cities, best_route, best_distance):
     plt.grid()
     plt.show()
 
-# 測試程式碼
+# Main program
 if __name__ == "__main__":
-    # 假設距離矩陣
-    num_cities = 50
     cities = getCity("large.csv")
-    
     start_time = time.time()
     distance_matrix = create_distance_matrix(cities)
     print("LOADING......")
-    #distance_matrix = np.random.rand(num_cities, num_cities)
-    #np.fill_diagonal(distance_matrix, 0)  # 自己到自己的距離為0
 
     population_size = 100
     num_generations = 200
     crossover_rate = 0.7
-    mutation_rate = 0.4
+    mutation_rate = 0.2
 
     best_route, best_distance = genetic_algorithm_parallel(
         distance_matrix,
         population_size,
-        len(cities),
+        cities,
         num_generations,
         crossover_rate,
         mutation_rate
@@ -152,5 +170,4 @@ if __name__ == "__main__":
     print("Shortest distance:", best_distance)
     print(f"Total time: {end_time - start_time:.6f} seconds")
 
-    # 繪製最佳路徑
     plot_route(cities, best_route, best_distance)
